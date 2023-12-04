@@ -1,3 +1,4 @@
+import yup from 'yup'
 import axios from 'axios'
 import { Notify } from 'notiflix/build/notiflix-notify-aio'
 import { Formik } from 'formik'
@@ -17,11 +18,12 @@ import {
   VStack,
   HStack,
   Select,
-  Checkbox
+  Checkbox,
+  Box
 } from '@chakra-ui/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 
-import addSectorValidator, {
+import editSectorValidator, {
   NAME,
   NAME_LABEL,
   SECTOR,
@@ -31,25 +33,15 @@ import addSectorValidator, {
   SUB_SUB_SECTOR,
   SUB_SUB_SECTOR_LABEL,
   SUB_SUB_SUB_SECTOR,
-  SUB_SUB_SUB_SECTOR_LABEL,
-  TERMS_AGREE,
-  TERMS_AGREE_LABEL
-} from '@/validators/addSectorValidator'
+  SUB_SUB_SUB_SECTOR_LABEL
+} from '@/validators/editSectorValidator'
 
-const initialValues = {
-  [NAME]: '',
-  [SECTOR]: '',
-  [SUB_SECTOR]: '',
-  [SUB_SUB_SECTOR]: '',
-  [SUB_SUB_SUB_SECTOR]: '',
-  [TERMS_AGREE]: ''
-}
-
-export default function AddSectorModal ({
+export default function EditSectorModal ({
   isOpen,
   onOpen,
   onClose,
-  setUserSectors
+  setUserSectors,
+  selectedUser
 }) {
   const [loading, setLoading] = useState(false)
   const [sectors, setSectors] = useState([])
@@ -95,9 +87,39 @@ export default function AddSectorModal ({
     setLoading(false)
   }
 
+  const getInitialSubSectors = async selectedUser => {
+    setLoading(true)
+
+    try {
+      const subSector = await axios.get(
+        `${process.env.NEXT_PUBLIC_URL}sector/sub-sectors/${selectedUser.subSector?.parentId}`
+      )
+
+      setSubSectors(subSector.data.subSectors)
+
+      if (selectedUser.subSubSector?.parentId) {
+        const subSubSector = await axios.get(
+          `${process.env.NEXT_PUBLIC_URL}sector/sub-sectors/${selectedUser.subSubSector?.parentId}`
+        )
+        setSubSubSectors(subSubSector.data.subSectors)
+      }
+
+      if (selectedUser.subSubSubSector?.parentId) {
+        const subSubSubSector = await axios.get(
+          `${process.env.NEXT_PUBLIC_URL}sector/sub-sectors/${selectedUser.subSubSubSector?.parentId}`
+        )
+        setSubSubSubSectors(subSubSubSector.data.subSectors)
+      }
+    } catch (error) {
+      Notify.failure('Server error, please reload the page')
+    }
+    setLoading(false)
+  }
+
   useEffect(() => {
     getSectors()
-  }, [])
+    getInitialSubSectors(selectedUser)
+  }, [isOpen])
 
   const getSectorsDetails = (id, sectors) => {
     const index = sectors.findIndex(item => item._id === id)
@@ -109,20 +131,22 @@ export default function AddSectorModal ({
     <Modal isOpen={isOpen} onClose={onClose}>
       <ModalOverlay />
       <ModalContent>
-        <ModalHeader sx={{ color: 'black' }}>Add Sector</ModalHeader>
+        <ModalHeader color='black'>Edit Sector</ModalHeader>
         <ModalCloseButton />
         <ModalBody>
           <Formik
-            initialValues={initialValues}
-            validationSchema={addSectorValidator}
+            initialValues={{
+              [NAME]: selectedUser.name,
+              [SECTOR]: selectedUser.sector?.sectorName,
+              [SUB_SECTOR]: selectedUser.subSector?.subSectorName,
+              [SUB_SUB_SECTOR]: selectedUser.subSubSector?.subSectorName,
+              [SUB_SUB_SUB_SECTOR]: selectedUser.subSubSubSector?.subSectorName
+            }}
+            validationSchema={editSectorValidator}
             onSubmit={async (
               values,
               { isSubmitting, resetForm, setErrors, errors }
             ) => {
-              if (!values[TERMS_AGREE]) {
-                return setFieldError(TERMS_AGREE, 'You must agree to terms')
-              }
-
               if (
                 values.subSector === '' &&
                 sectors.some(
@@ -170,8 +194,8 @@ export default function AddSectorModal ({
               }
 
               try {
-                await axios.post(
-                  `${process.env.NEXT_PUBLIC_URL}sector/add-user-sector`,
+                await axios.put(
+                  `${process.env.NEXT_PUBLIC_URL}sector/edit-user-sector/${selectedUser?._id}`,
                   {
                     ...dataToSubmit
                   }
@@ -205,6 +229,7 @@ export default function AddSectorModal ({
                   <FormControl isInvalid={errors[NAME] !== undefined}>
                     <FormLabel color='black'>{NAME_LABEL}</FormLabel>
                     <Input
+                      value={values[NAME]}
                       name={NAME}
                       onBlur={handleBlur}
                       onChange={handleChange}
@@ -218,7 +243,6 @@ export default function AddSectorModal ({
                   <FormControl>
                     <FormLabel color='black'>{SECTOR_LABEL}</FormLabel>
                     <Select
-                      value={selectedSector?.name}
                       name={SECTOR}
                       onBlur={handleBlur}
                       onChange={e => {
@@ -238,7 +262,13 @@ export default function AddSectorModal ({
                       placeholder='Select option'
                     >
                       {sectors.map((item, index) => (
-                        <option key={index} value={item?.sectorName}>
+                        <option
+                          selected={
+                            selectedUser.sector?.sectorName === item?.sectorName
+                          }
+                          key={index}
+                          value={item?.sectorName}
+                        >
                           {item?.sectorName}
                         </option>
                       ))}
@@ -247,13 +277,18 @@ export default function AddSectorModal ({
                       {errors[SECTOR]}
                     </FormHelperText>
                   </FormControl>
-                  {sectors[selectedSector?.sectorIndex]?.hasSubSector &&
+                  {(sectors[selectedSector?.sectorIndex]?.hasSubSector ||
+                    selectedUser.subSector?.subSectorName !== undefined) &&
                     !loading && (
                       <FormControl>
                         <FormLabel color='black'>{SUB_SECTOR_LABEL}</FormLabel>
                         <Select
                           name={SUB_SECTOR}
-                          value={selectedSubSector?.sectorName}
+                          value={
+                            selectedSubSector.sectorName !== ''
+                              ? selectedSubSector.sectorName
+                              : values[SUB_SECTOR]
+                          }
                           onBlur={handleBlur}
                           onChange={e => {
                             const index = subSectors.findIndex(
@@ -275,7 +310,14 @@ export default function AddSectorModal ({
                           placeholder='Select option'
                         >
                           {subSectors.map((item, index) => (
-                            <option key={index} value={item.subSectorName}>
+                            <option
+                              selected={
+                                selectedUser.subSector?.subSectorName ===
+                                item?.subSectorName
+                              }
+                              key={index}
+                              value={item.subSectorName}
+                            >
                               {item?.subSectorName}
                             </option>
                           ))}
@@ -285,7 +327,8 @@ export default function AddSectorModal ({
                         </FormHelperText>
                       </FormControl>
                     )}
-                  {subSectors[selectedSubSector?.sectorIndex]?.hasSubSector && (
+                  {(subSectors[selectedSubSector?.sectorIndex]?.hasSubSector ||
+                    selectedUser.subSubSector?.subSectorName !== undefined) && (
                     <FormControl>
                       <FormLabel color='black'>
                         {SUB_SUB_SECTOR_LABEL}
@@ -317,7 +360,14 @@ export default function AddSectorModal ({
                         placeholder='Select option'
                       >
                         {subSubSectors.map((item, index) => (
-                          <option key={index} value={item.subSectorName}>
+                          <option
+                            selected={
+                              selectedUser.subSubSector?.subSectorName ===
+                              item?.subSectorName
+                            }
+                            key={index}
+                            value={item.subSectorName}
+                          >
                             {item?.subSectorName}
                           </option>
                         ))}
@@ -327,8 +377,9 @@ export default function AddSectorModal ({
                       </FormHelperText>
                     </FormControl>
                   )}
-                  {subSubSectors[selectedSubSubSector?.sectorIndex]
-                    ?.hasSubSector && (
+                  {(subSectors[selectedSubSector?.sectorIndex]?.hasSubSector ||
+                    selectedUser.subSubSubSector?.subSectorName !==
+                      undefined) && (
                     <FormControl>
                       <FormLabel color='black'>
                         {SUB_SUB_SUB_SECTOR_LABEL}
@@ -354,7 +405,14 @@ export default function AddSectorModal ({
                         placeholder='Select option'
                       >
                         {subSubSubSectors.map((item, index) => (
-                          <option key={index} value={item.subSectorName}>
+                          <option
+                            selected={
+                              selectedUser.subSubSubSector?.subSectorName ===
+                              item?.subSectorName
+                            }
+                            key={index}
+                            value={item.subSectorName}
+                          >
                             {item?.subSectorName}
                           </option>
                         ))}
@@ -364,21 +422,6 @@ export default function AddSectorModal ({
                       </FormHelperText>
                     </FormControl>
                   )}
-                  <FormControl>
-                    <Checkbox
-                      onBlur={handleBlur}
-                      onChange={e =>
-                        setFieldValue(TERMS_AGREE, e.target.checked)
-                      }
-                      name={TERMS_AGREE}
-                      color='black'
-                    >
-                      Agree to terms
-                    </Checkbox>
-                    <FormHelperText color='red'>
-                      {errors[TERMS_AGREE]}
-                    </FormHelperText>
-                  </FormControl>
                   <HStack>
                     <Button
                       isLoading={isSubmitting}
